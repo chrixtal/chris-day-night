@@ -8,9 +8,46 @@ motionStyle.textContent=`
 html.world-transition body{transition:none!important}
 .world-wipe{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:10000;contain:strict}
 .world-wipe-disc{position:absolute;width:2px;height:2px;margin:-1px;border-radius:50%;transform-origin:center;will-change:transform}
+.sound-toggle{background:none;border:1px solid var(--line);border-radius:24px;padding:8px 14px;min-height:44px;font-size:12px;white-space:nowrap}
+.sound-toggle[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
+@media(max-width:800px){.sound-toggle{margin-left:auto}}
 @media(prefers-reduced-motion:reduce){.world-wipe{display:none!important}}
 `;
 document.head.append(motionStyle);
+const sound=(()=>{
+  const Audio=window.AudioContext||window.webkitAudioContext;
+  let enabled=false,context=null,epoch=0;const voices=new Set();
+  try{enabled=localStorage.getItem('chris-sound')==='on'}catch{}
+  const toggle=document.createElement('button');toggle.type='button';toggle.className='sound-toggle';
+  function render(){toggle.textContent=Audio?('音效：'+(enabled?'開':'關')):'音效：不支援';toggle.setAttribute('aria-pressed',String(enabled&&!!Audio));toggle.setAttribute('aria-label','切換音效，目前'+(enabled&&Audio?'開啟':'關閉'));toggle.disabled=!Audio}
+  function stop(){epoch++;for(const voice of voices){try{voice.osc.stop()}catch{}}}
+  function ready(){if(!Audio)return null;if(!context)context=new Audio();return context}
+  async function play(next){
+    stop();if(!enabled||!Audio||document.hidden)return;const ticket=epoch;
+    try{
+      const ctx=ready();if(ctx.state!=='running')await ctx.resume();
+      if(ticket!==epoch||!enabled||document.hidden||ctx.state!=='running')return;
+      const t=ctx.currentTime;const night=next==='observe';const duration=night?.68:.54;
+      [[night?240:330,night?110:660,0,.028],[night?360:495,night?165:990,.035,.012]].forEach(([start,end,delay,volume])=>{
+        const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type='sine';
+        osc.frequency.setValueAtTime(start,t+delay);osc.frequency.exponentialRampToValueAtTime(end,t+duration);
+        gain.gain.setValueAtTime(0,t);gain.gain.setValueAtTime(0,t+delay);gain.gain.linearRampToValueAtTime(volume,t+delay+.05);gain.gain.exponentialRampToValueAtTime(.0001,t+duration);gain.gain.linearRampToValueAtTime(0,t+duration+.02);
+        osc.connect(gain);gain.connect(ctx.destination);const voice={osc,gain};voices.add(voice);
+        osc.onended=()=>{osc.disconnect();gain.disconnect();voices.delete(voice)};
+        osc.start(t+delay);osc.stop(t+duration+.03);
+      });
+    }catch{/* Audio failure must not block navigation. */}
+  }
+  toggle.addEventListener('click',()=>{
+    enabled=!enabled;try{localStorage.setItem('chris-sound',enabled?'on':'off')}catch{}render();
+    if(!enabled){stop();return}
+    try{const ctx=ready();if(ctx)ctx.resume().catch(()=>{})}catch{}
+  });
+  document.querySelector('.header').append(toggle);render();
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});
+  window.addEventListener('pagehide',stop);
+  return {play,stop};
+})();
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 const motionProfiles={
   observe:{cover:560,fade:190,color:'#202327',glow:'rgba(228,168,137,.23)',ease:'cubic-bezier(.45,0,.2,1)'},
@@ -18,7 +55,7 @@ const motionProfiles={
 };
 let activeMotion=null;
 function stopMotion(commit=false){
-  const job=activeMotion;if(!job)return;activeMotion=null;
+  sound.stop();const job=activeMotion;if(!job)return;activeMotion=null;
   try{if(commit)job.commit()}finally{job.animations.forEach(a=>a.cancel());job.layer.remove();document.documentElement.classList.remove('world-transition')}
 }
 reducedMotion.addEventListener('change',()=>{if(reducedMotion.matches)stopMotion(true)});
@@ -26,6 +63,7 @@ window.addEventListener('resize',()=>stopMotion(true));
 window.addEventListener('pagehide',()=>stopMotion(true));
 async function choose(next,origin,returnToTop=false){
   if(activeMotion||next===mode||!motionProfiles[next])return;
+  void sound.play(next);
   let committed=false;
   const commit=()=>{if(committed)return;committed=true;history.pushState(null,'','#'+next);apply(next,true);if(returnToTop)window.scrollTo({top:0,behavior:'instant'})};
   if(reducedMotion.matches||typeof Element.prototype.animate!=='function'){commit();return}
