@@ -2,10 +2,65 @@ const $ = (s) => document.querySelector(s);
 const copy = {build:{eyebrow:'01 / THE PRODUCT STUDIO',headline:'用邏輯<span>打造。</span>',intro:'把複雜的問題，整理成能落地的產品。<br>我是 Chris，關注 AI 產品、工程與系統整合。',label:'SELECTED DIRECTIONS / 01—03',title:'從問題，走向可能。',note:'研究與展示方向，非已完成的客戶案例。',ticker:'BUILD WITH INTENTION.',other:'走進夜間暗房 ↗'},observe:{eyebrow:'02 / THE OBSERVATION ROOM',headline:'用感受<span>觀看。</span>',intro:'把容易錯過的瞬間，留下來。<br>攝影、設計，以及另一種理解世界的方法。',label:'VISUAL EXPERIMENTS / 01—03',title:'在光與留白之間。',note:'視覺實驗版位，非本人攝影作品。',ticker:'OBSERVE WITH CURIOSITY.',other:'回到日間工作室 ↗'}};
 let mode='build';
 function apply(next,announce=false){mode=next==='observe'?'observe':'build';const c=copy[mode];document.documentElement.dataset.world=mode;$('#eyebrow').textContent=c.eyebrow;$('#headline').innerHTML=c.headline;$('#intro').innerHTML=c.intro;$('#work-label').textContent=c.label;$('#work-title').textContent=c.title;$('#work-note').textContent=c.note;$('#ticker-last').textContent=c.ticker;$('#other-world').textContent=c.other;$('#hero-link').innerHTML=(mode==='build'?'探索產品思考':'探索視覺實驗')+' <span>↗</span>';$('#build-content').hidden=mode!=='build';$('#observe-content').hidden=mode!=='observe';document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));document.title='Chris Yang — '+(mode==='build'?'日間工作室':'夜間暗房');if(announce)$('#announcement').textContent='已切換至'+(mode==='build'?'日間工作室':'夜間暗房');try{localStorage.setItem('chris-world',mode)}catch{}}
-function choose(next){history.pushState(null,'','#'+next);apply(next,true)}
-document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.mode)));
-$('#other-world').addEventListener('click',()=>{choose(mode==='build'?'observe':'build');window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})});
-function fromHash(){const h=location.hash.slice(1);if(h==='build'||h==='observe')apply(h)}
+
+// Keep transition styling scoped to this enhancement; no external dependency.
+const motionStyle=document.createElement('style');
+motionStyle.textContent=`
+html.world-transition body { transition: none !important; }
+html.world-transition::view-transition-group(root) { animation-duration: 480ms; }
+html.world-transition::view-transition-image-pair(root) { isolation: auto; }
+html.world-transition::view-transition-old(root),
+html.world-transition::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.world-transition::view-transition-old(root) { z-index: 1; }
+html.world-transition::view-transition-new(root) { z-index: 2; }
+@media(prefers-reduced-motion: reduce) {
+  html.world-transition::view-transition-group(root) { animation: none !important; }
+}
+`;
+document.head.append(motionStyle);
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+let activeTransition=null;
+let motionEpoch=0;
+function cancelMotion(){motionEpoch++;activeTransition?.skipTransition();}
+reducedMotion.addEventListener('change',()=>{if(reducedMotion.matches)cancelMotion()});
+window.addEventListener('resize',cancelMotion);
+async function choose(next,origin,returnToTop=false){
+  if(activeTransition||next===mode)return;
+  const ticket=++motionEpoch;
+  const update=()=>{
+    if(ticket!==motionEpoch)return;
+    history.pushState(null,'','#'+next);
+    apply(next,true);
+    if(returnToTop)window.scrollTo({top:0,behavior:'instant'});
+  };
+  if(reducedMotion.matches||!document.startViewTransition){update();return;}
+  const rect=origin?.getBoundingClientRect();
+  const x=rect?Math.max(0,Math.min(innerWidth,rect.left+rect.width/2)):innerWidth/2;
+  const y=rect?Math.max(0,Math.min(innerHeight,rect.top+rect.height/2)):innerHeight/2;
+  const radius=Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y));
+  document.documentElement.classList.add('world-transition');
+  let transition;
+  try {
+    transition=document.startViewTransition(update);
+    activeTransition=transition;
+    await transition.ready;
+    if(ticket===motionEpoch&&!reducedMotion.matches){
+      document.documentElement.animate(
+        {clipPath:[`circle(0px at ${x}px ${y}px)`,`circle(${radius}px at ${x}px ${y}px)`]},
+        {duration:480,easing:'cubic-bezier(.22,.61,.36,1)',fill:'both',pseudoElement:'::view-transition-new(root)'}
+      );
+    }else{transition.skipTransition();}
+  } catch {
+    if(transition){transition.skipTransition();}else{update();}
+  } finally {
+    if(transition){try{await transition.finished;}catch{}}
+    if(activeTransition===transition)activeTransition=null;
+    document.documentElement.classList.remove('world-transition');
+  }
+}
+document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.mode,b)));
+$('#other-world').addEventListener('click',(event)=>choose(mode==='build'?'observe':'build',event.currentTarget,true));
+function fromHash(){const h=location.hash.slice(1);cancelMotion();if(h==='build'||h==='observe')apply(h)}
 window.addEventListener('hashchange',fromHash);window.addEventListener('popstate',fromHash);
 let saved='build';try{saved=localStorage.getItem('chris-world')||'build'}catch{}
 apply(['#build','#observe'].includes(location.hash)?location.hash.slice(1):saved);
